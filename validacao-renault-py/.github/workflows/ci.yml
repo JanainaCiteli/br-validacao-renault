@@ -1,0 +1,66 @@
+name: e2e-tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps
+
+      - name: Define reports folder
+        id: set
+        run: |
+          TS=$(date '+%Y-%m-%d_%H-%M-%S')
+          echo "dir=reports/${TS}_${{ matrix.browser }}" >> $GITHUB_OUTPUT
+
+      - name: Run tests
+        env:
+          BASE_URL: https://loja.renault.com.br/
+          BROWSER: ${{ matrix.browser }}
+          REPORTS_DIR: ${{ steps.set.outputs.dir }}
+        run: |
+          python run_tests.py
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.browser }}
+          path: ${{ steps.set.outputs.dir }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### ✅ Relatórios Playwright (${{ matrix.browser }})" >> $GITHUB_STEP_SUMMARY
+          echo "- Pasta: ${{ steps.set.outputs.dir }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifacts: reports-${{ matrix.browser }}" >> $GITHUB_STEP_SUMMARY

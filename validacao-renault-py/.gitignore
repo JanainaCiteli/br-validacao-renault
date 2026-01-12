@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenv
+venv/
+
+# Pytest
+.pytest_cache/
+
+# Relatórios
+reports/
+playwright-report/
+relatorio_renault.html
+
+# SO
+.DS_Store

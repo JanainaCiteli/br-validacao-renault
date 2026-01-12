@@ -1,0 +1,8 @@
+pytest==8.3.3
+pytest-playwright>=0.5.0,<0.6.0
+playwright>=1.40,<1.51
+pytest-html>=4.1.1,<5.0.0
+pytest-metadata>=3.1.1
+pytest-xdist>=3.6.1
+pytest-rerunfailures>=13.0
+python-dotenv>=1.0.1
