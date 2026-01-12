@@ -19,6 +19,7 @@ Este projeto realiza validações automatizadas da home da Renault, com geraçã
 1. Instale dependências e browsers:
 ```bash
 pip install -r requirements.txt
+pip install playwright
 python -m playwright install --with-deps
 ```
 
