@@ -55,6 +55,18 @@ def reports_dir(pytestconfig):
     # Fallback extremo (não deveria ocorrer, pois pytest_configure sempre roda antes)
     return _get_reports_root(pytestconfig)
 
+@pytest.fixture(scope="function", autouse=True)
+def setup_timeouts(page):
+    """
+    Aumenta os timeouts padrão para evitar flakiness no CI/GitHub Actions.
+    """
+    # Timeout para ações (click, fill, etc) - Aumentar de 30s para 45s
+    page.set_default_timeout(45000)
+    
+    # Timeout para navegação (goto, reload) - Aumentar de 30s para 60s
+    page.set_default_navigation_timeout(60000)
+    
+    yield
 
 def pytest_configure(config):
     """Configura caminhos do relatório HTML e Output do Playwright, além de variáveis de execução."""

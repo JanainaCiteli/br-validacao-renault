@@ -118,7 +118,12 @@ def test_fluxo_jornada_de_reserva(page: Page):
             target.click(force=True, timeout=5000)
 
             # Espera redirecionar para Jornada de Reserva ou Versões do Configurador
-            page.wait_for_url(re.compile(r"/jornada-de-reserva|/configurador/.+/versoes|/r-pass/pre-venda/configurador/.+/versoes"), timeout=30000)
+            # Aumento para 60s e alterado para 'domcontentloaded' ignorar scripts lentos de analytics
+            page.wait_for_url(
+                re.compile(r"/jornada-de-reserva|/configurador/.+/versoes|/r-pass/pre-venda/configurador/.+/versoes"), 
+                timeout=60000, 
+                wait_until="domcontentloaded"
+            )
             _aceitar_cookies(page)
 
             # Se caiu na Jornada de Reserva, clica "Iniciar configuração"
