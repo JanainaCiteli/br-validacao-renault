@@ -1,5 +1,3 @@
-[![CI - e2e-tests](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml/badge.svg)](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml)
-
 # Validação E-Comm Renault (Playwright + Pytest)
 
 Este projeto realiza validações automatizadas da home da Renault, com geração de relatórios completos (HTML/JUnit + evidências) e execução em CI via GitHub Actions.
