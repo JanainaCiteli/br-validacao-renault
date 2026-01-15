@@ -150,6 +150,4 @@ git commit -m "chore: aplicar .gitignore e limpar artifacts"
 
 ---
 
-## 📞 Suporte
 
-Abra uma issue ou me peça para ajustar mais regras/seletores e cenários.
