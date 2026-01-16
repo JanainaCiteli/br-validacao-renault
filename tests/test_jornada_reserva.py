@@ -59,20 +59,23 @@ def test_fluxo_jornada_de_reserva(page: Page):
 
     _carregar_toda_pagina(page)
 
-    # Localiza CTAs "configure e reserve" (button/link + fallback por texto)
+    # 1. Localiza CTAs (Botões OU Links que contenham o texto)
     cta_regex = re.compile(r"configure\s*e\s*reserve", re.I)
-    btns = page.get_by_role("button", name=cta_regex)
-    links = page.get_by_role("link", name=cta_regex)
+    
+    # Cria um "Locator" unificado: busca tags 'a' ou 'button' que tenham esse texto
+    loc_ctas = page.locator("a, button").filter(has_text=cta_regex)
 
-    total_btns = btns.count()
-    total_links = links.count()
-    total_ctas = total_btns + total_links
+    print("Aguardando renderização dos botões...")
 
-    # Fallback por texto, se nada encontrado
-    if total_ctas == 0:
-        texto_ctas = page.get_by_text(cta_regex)
-        total_ctas = texto_ctas.count()
-        print(f"[INFO] CTAs via get_by_text: {total_ctas}")
+    # 2. ESPERA EXPLÍCITA
+    try:
+        loc_ctas.first.wait_for(state="visible", timeout=15000)
+    except Exception:
+        print("Timeout: Botões não apareceram. Tirando print de debug.")
+        page.screenshot(path="debug_erro_botoes.png")
+
+    # 3. Contagem segura
+    total_ctas = loc_ctas.count()
 
     print(f"Total de CTAs 'configure e reserve' encontrados: {total_ctas}")
     assert total_ctas > 0, "Nenhum CTA 'configure e reserve' encontrado na home."
@@ -80,32 +83,24 @@ def test_fluxo_jornada_de_reserva(page: Page):
     erros = []
     sucesso = 0
 
-    # Itera por até N CTAs (todos, por padrão)
+    # Itera pelos CTAs encontrados
     for idx in range(total_ctas):
-        # Volta/garante Home em cada iteração para evitar referências obsoletas
+        # Volta/garante Home em cada iteração
         page.goto("/", wait_until="domcontentloaded", timeout=30000)
         _aceitar_cookies(page)
         _carregar_toda_pagina(page)
 
-        # Recoleta CTAs
-        btns = page.get_by_role("button", name=cta_regex)
-        links = page.get_by_role("link", name=cta_regex)
-        total_btns = btns.count()
-        total_links = links.count()
+        # Recria o locator após o refresh
+        loc_ctas = page.locator("a, button").filter(has_text=cta_regex)
+        
+        # Espera novamente o elemento reaparecer
+        try:
+            loc_ctas.first.wait_for(state="visible", timeout=15000)
+        except:
+            pass # Se falhar aqui, o target.click vai falhar e cair no except abaixo
 
-        # Seleciona CTA por índice
-        target = None
-        if idx < total_btns:
-            target = btns.nth(idx)
-        elif total_links > 0 and (idx - total_btns) < total_links:
-            target = links.nth(idx - total_btns)
-        else:
-            # Fallback por texto
-            texto_ctas = page.get_by_text(cta_regex)
-            if texto_ctas.count() == 0:
-                erros.append(f"[IDX {idx}] CTA não encontrado ao recoletar.")
-                continue
-            target = texto_ctas.nth(idx)
+        # SELEÇÃO SIMPLIFICADA
+        target = loc_ctas.nth(idx)
 
         try:
             # Traz elemento para viewport
@@ -117,8 +112,7 @@ def test_fluxo_jornada_de_reserva(page: Page):
             # Clica CTA
             target.click(force=True, timeout=5000)
 
-            # Espera redirecionar para Jornada de Reserva ou Versões do Configurador
-            # Aumento para 60s e alterado para 'domcontentloaded' ignorar scripts lentos de analytics
+            # Espera redirecionar
             page.wait_for_url(
                 re.compile(r"/jornada-de-reserva|/configurador/.+/versoes|/r-pass/pre-venda/configurador/.+/versoes"), 
                 timeout=60000, 
@@ -139,7 +133,6 @@ def test_fluxo_jornada_de_reserva(page: Page):
             # Heurística: texto típico de versões
             texto_versoes = page.get_by_text(re.compile(r"versões\s*a partir de", re.I))
             if texto_versoes.count() == 0:
-                # Ainda assim considera sucesso se URL está correta, mas loga aviso
                 print(f"[AVISO] Não encontrou texto 'versões a partir de' em {page.url}")
 
             sucesso += 1

@@ -86,6 +86,9 @@ pytest --base-url https://loja.renault.com.br/ --browser chromium `
   --junitxml="reports/$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')/junit.xml"
 ```
 
+- 🚬 Smoke Test:
+```powershell
+$env:MODELOS_LIMIT="1"; $env:VERSOES_LIMIT="1"; $env:WORKERS="1"; python run_tests.py -m smoke
 ---
 
 ## 🤖 CI (GitHub Actions)
