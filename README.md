@@ -1,6 +1,8 @@
 # Validação E-Comm Renault (Playwright + Pytest)
 
-Este projeto realiza validações automatizadas da home da Renault, com geração de relatórios completos (HTML/JUnit + evidências) e execução em CI via GitHub Actions.
+Este projeto realiza validações automatizadas da jornada E-Comm da Renault, com geração de relatórios completos (HTML/JUnit + evidências) e execução em CI via GitHub Actions.
+
+[![CI - e2e-tests](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml/badge.svg)](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml)
 
 ## 🚀 Stack
 - Python + Pytest
@@ -14,94 +16,102 @@ Este projeto realiza validações automatizadas da home da Renault, com geraçã
 
 ## ▶️ Execução local
 
-1. Instale dependências e browsers:
+1) Instale dependências e browsers:
 ```bash
 pip install -r requirements.txt
 pip install playwright
 python -m playwright install --with-deps
 ```
 
-2. Rode os testes:
+2) E2E ponta a ponta com evidências (recomendado):
 ```bash
-python run_tests.py
+python run_tests.py -k test_e2e_matriz_jornadas
 ```
 
-3. Personalize opcionalmente (Linux/macOS):
+- O runner força:
+  - --output=reports/<timestamp>
+  - --video=on
+  - --screenshot=on
+  - --tracing=on
+  - --html=reports/<timestamp>/relatorio_renault.html
+  - --junitxml=reports/<timestamp>/junit.xml
+
+3) Personalize por ambiente:
+- Linux/macOS:
 ```bash
-BASE_URL=https://loja.renault.com.br/ BROWSER=chromium python run_tests.py
+BASE_URL=https://loja.renault.com.br/ BROWSER=chromium python run_tests.py -k test_e2e_matriz_jornadas
 ```
 
-4. Personalize no Windows:
-
-- PowerShell:
+- Windows PowerShell:
 ```powershell
-$env:BASE_URL="https://loja.renault.com.br/"; $env:BROWSER="chromium"; python run_tests.py
+$env:BASE_URL="https://loja.renault.com.br/"; $env:BROWSER="chromium"; python run_tests.py -k test_e2e_matriz_jornadas
 ```
 
-- CMD (Prompt de Comando):
+- Windows CMD:
 ```bat
 set BASE_URL=https://loja.renault.com.br/
 set BROWSER=chromium
-python run_tests.py
+python run_tests.py -k test_e2e_matriz_jornadas
 ```
 
-Ou em uma única linha no CMD:
-```bat
-set BASE_URL=https://loja.renault.com.br/ & set BROWSER=chromium & python run_tests.py
+4) Smoke E2E rápido (limitar modelos/versões e workers):
+- Linux/macOS:
+```bash
+MODELOS_LIMIT=1 VERSOES_LIMIT=1 WORKERS=1 python run_tests.py -k test_e2e_matriz_jornadas
 ```
 
-- Relatórios serão gerados em `reports/<timestamp>/`:
-  - `relatorio_renault.html` (interativo, auto-contido)
-  - `junit.xml`
-  - Evidências: `screenshots/`, `traces/`, `videos/`, `logs/`
+- Windows PowerShell:
+```powershell
+$env:MODELOS_LIMIT="1"; $env:VERSOES_LIMIT="1"; $env:WORKERS="1"; python run_tests.py -k test_e2e_matriz_jornadas
+```
 
-- Uma cópia do relatório é salva na raiz do repo para rápida visualização:
-  - `relatorio_renault.html`
+5) Relatórios serão gerados em reports/<timestamp>/:
+- relatorio_renault.html (interativo, auto-contido)
+- junit.xml
+- Evidências: screenshots/, traces/, videos/, logs/
+- Uma cópia rápida do HTML é salva na raiz: relatorio_renault.html
 
-> Para abrir ordenado por resultado (como no exemplo):
-> `file:///C:/git-projetos/renault/br/br-ecomm-validacao/validacao-renault-py/relatorio_renault.html?sort=result`
+> Para abrir ordenado por resultado:
+> file:///C:/git-projetos/renault/br/br-ecomm-validacao/relatorio_renault.html?sort=result
 
-> Observação: O runner adiciona automaticamente `--reruns=1` para reduzir flakiness em ambientes locais e de CI.
+> Observação: O runner adiciona automaticamente --reruns=1 para reduzir flakiness em ambientes locais e de CI.
 
 ---
 
 ## 🌐 Base URL via --base-url
 
-Os testes agora usam `page.goto("/")`. Configure a base URL com a flag `--base-url` do pytest-playwright (o runner já injeta via variável de ambiente):
+Os testes usam page.goto("/"). O runner injeta BASE_URL pela CLI, mas você pode usar pytest direto:
 
-- Local (via runner):
-  - `BASE_URL=https://loja.renault.com.br/ python run_tests.py`
-
-- Direto com pytest (exemplo Linux/macOS):
+- Direto com pytest (Linux/macOS):
 ```bash
-pytest --base-url https://loja.renault.com.br/ --browser chromium \
+pytest -k test_e2e_matriz_jornadas --base-url https://loja.renault.com.br/ --browser chromium \
   --html=reports/$(date +%F_%H-%M-%S)/relatorio_renault.html --self-contained-html \
-  --junitxml=reports/$(date +%F_%H-%M-%S)/junit.xml
+  --junitxml=reports/$(date +%F_%H-%M-%S)/junit.xml \
+  --video=on --screenshot=on --tracing=on --output=reports/$(date +%F_%H-%M-%S)
 ```
 
-- Direto com pytest (exemplo Windows PowerShell):
+- Direto com pytest (Windows PowerShell):
 ```powershell
-pytest --base-url https://loja.renault.com.br/ --browser chromium `
+pytest -k test_e2e_matriz_jornadas --base-url https://loja.renault.com.br/ --browser chromium `
   --html="reports/$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')/relatorio_renault.html" --self-contained-html `
-  --junitxml="reports/$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')/junit.xml"
+  --junitxml="reports/$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')/junit.xml" `
+  --video=on --screenshot=on --tracing=on --output="reports/$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
 ```
 
-- 🚬 Smoke Test:
-```powershell
-$env:MODELOS_LIMIT="1"; $env:VERSOES_LIMIT="1"; $env:WORKERS="1"; python run_tests.py -m smoke
+> Nota: Ao rodar pytest direto, inclua sempre --tracing=on e --output apontando para reports/<timestamp> para garantir evidências completas. Com run_tests.py isso já está garantido.
+
 ---
 
 ## 🤖 CI (GitHub Actions)
 
-Arquivo: `.github/workflows/ci.yml`
+Arquivo: .github/workflows/ci.yml
 
-- Matrix de navegadores: `chromium`, `firefox`, `webkit`
-- Instala `playwright` browsers
+- Matrix de navegadores: chromium, firefox, webkit
+- Instala playwright browsers
 - Gera relatórios por navegador e faz upload como artifacts
-- O runner já inclui `--reruns=1` para reduzir flakiness
+- O runner já inclui --reruns=1 para reduzir flakiness
 
-Badge (já no topo do README):
-
+Badge:
 [![CI - e2e-tests](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml/badge.svg)](https://github.com/renault/br-ecomm-validacao/actions/workflows/ci.yml)
 
 ---
@@ -109,9 +119,12 @@ Badge (já no topo do README):
 ## 📦 Estrutura do projeto
 
 ```
-validacao-renault-py/
+br-ecomm-validacao/
 ├─ tests/
-│  ├─ test_home_renault.py
+│  ├─ test_e2e_relatorio_matriz.py   # E2E ponta a ponta
+│  ├─ test_jornada_reserva.py        # Jornada específica
+│  ├─ test_jornada_concessionaria.py # Jornada específica
+│  ├─ test_jornada_pagamento.py      # Jornada específica
 ├─ reports/
 │  └─ <timestamp>/
 │     ├─ relatorio_renault.html
@@ -125,7 +138,6 @@ validacao-renault-py/
 ├─ pytest.ini
 ├─ requirements.txt
 ├─ run_tests.py
-├─ .gitignore
 ├─ README.md
 └─ relatorio_renault.html (cópia rápida do último relatório)
 ```
@@ -134,21 +146,17 @@ validacao-renault-py/
 
 ## 🧪 Dicas de testes
 
-- Preferir seletores estáveis (ex.: `data-testid`) para reduzir flakiness
-- Utilizar `expect(...).to_be_visible()` com timeout apropriado
+- Preferir seletores estáveis (ex.: data-testid) para reduzir flakiness
+- Utilizar expect(...).to_be_visible() com timeout apropriado
 - Evitar asserts em conteúdo não determinístico (ex.: contagem exata de cards)
 
 ---
 
 ## 🧹 Limpeza de arquivos rastreados indevidos
 
-Se `venv/`, `.pytest_cache/` ou relatórios antigos estiverem versionados, execute:
+Se venv/, .pytest_cache/ ou relatórios antigos estiverem versionados, execute:
 ```bash
 git rm -r --cached venv/ .pytest_cache/ reports/ relatorio_renault.html
 git add .
 git commit -m "chore: aplicar .gitignore e limpar artifacts"
 ```
-
----
-
-

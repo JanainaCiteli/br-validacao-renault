@@ -86,8 +86,30 @@ def test_kwid_versao2_avanca_para_design(page: Page):
     # Procura por elementos típicos de seleção de cor ou loaders infinitos
     # Se a página estiver em branco ou com erro, isso vai falhar (o que queremos para reportar o bug)
     try:
-        seletor_opcoes = ctx.locator('[data-testid*="color"], [role="radio"], .color-selector, text="Cor"')
-        expect(seletor_opcoes.first).to_be_visible(timeout=10000)
+        # Tentativa 1: Seletores CSS válidos (sem misturar com text)
+        seletor_opcoes = ctx.locator('[data-testid*="color"], [role="radio"], .color-selector').first
+        # Tentativa 2: Busca por texto separadamente
+        texto_cor = ctx.get_by_text(re.compile(r"Cor|Color", re.I)).first
+        
+        # Verifica se pelo menos um dos seletores encontra elementos visíveis
+        opcoes_encontradas = False
+        if seletor_opcoes.count() > 0:
+            try:
+                expect(seletor_opcoes).to_be_visible(timeout=5000)
+                opcoes_encontradas = True
+            except AssertionError:
+                pass
+        
+        if not opcoes_encontradas and texto_cor.count() > 0:
+            try:
+                expect(texto_cor).to_be_visible(timeout=5000)
+                opcoes_encontradas = True
+            except AssertionError:
+                pass
+        
+        if not opcoes_encontradas:
+            raise AssertionError("Nenhuma opção de Design visível encontrada")
+            
     except AssertionError as e:
         # Tira um screenshot para evidência no relatório antes de falhar
         page.screenshot(path="evidencia_erro_kwid.png")

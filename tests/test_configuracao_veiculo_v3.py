@@ -399,7 +399,8 @@ def _selecionar_versao(page, ctx, idx: int):
         combo.click(timeout=6000)
         options = ctx.locator(f'#{cid} [role="option"]') if cid else ctx.locator('[role="listbox"] [role="option"]')
         total = options.count()
-        assert idx < total, f"Índice de versão inválido (combobox). total={total}, idx={idx}"
+        if idx >= total:
+            raise AssertionError(f"Índice de versão inválido (combobox). total={total}, idx={idx}")
         options.nth(idx).click(timeout=8000)
         return
 
@@ -422,9 +423,13 @@ def _selecionar_versao(page, ctx, idx: int):
                 cards.nth(idx).click(timeout=10000)
             page.wait_for_url(re.compile(r"/configurador/.+/(design|cores|rodas|interior)", re.I), timeout=35000)
             return
+        # Se chegou aqui e há botões/cards mas idx está fora do range
+        if total_btns > 0 or total_cards > 0:
+            raise AssertionError(f"Índice de versão inválido. total_btns={total_btns}, total_cards={total_cards}, idx={idx}")
 
     # 3) Única versão (default)
-    assert idx == 0, "Índice de versão inválido."
+    if idx != 0:
+        raise AssertionError(f"Índice de versão inválido. Tentativa de acessar idx={idx}, mas apenas versão única (idx=0) disponível.")
 
 
 def _ir_para_etapa(ctx, tipo: str):
@@ -642,11 +647,24 @@ def test_configuracao_veiculo_para_todos_modelos_e_versoes(page: Page, request):
             # Versões
             qtd_versoes = _contar_versoes(page, ctx)
             versoes_iter = qtd_versoes if VERSOES_LIMIT == 0 else min(qtd_versoes, VERSOES_LIMIT)
+            
+            # Garante que não tentamos acessar índices além do disponível
+            # Revalida o contexto antes de iterar
+            try:
+                # Revalida contagem antes do loop para garantir consistência
+                ctx_atual = _get_configurator_ctx(page)
+                qtd_versoes_atual = _contar_versoes(page, ctx_atual)
+                versoes_iter = min(versoes_iter, qtd_versoes_atual)
+            except Exception:
+                pass  # Se falhar, usa o valor original
 
             for v_idx in range(versoes_iter):
                 try:
                     # Guarda URL para retorno (se for Page)
                     versoes_url = page.url
+                    
+                    # Recupera contexto atualizado antes de selecionar versão
+                    ctx = _get_configurator_ctx(page)
 
                     # Seleciona a versão (no-op se só existir 1 e v_idx=0)
                     _selecionar_versao(page, ctx, v_idx)

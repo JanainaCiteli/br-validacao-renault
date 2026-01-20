@@ -21,6 +21,7 @@ MODELOS_LIMIT = int(os.getenv("MODELOS_LIMIT", "1") or "1")
 VERSOES_LIMIT = int(os.getenv("VERSOES_LIMIT", "1") or "1")
 CEP_BUSCA = os.getenv("CEP_BUSCA", "01001-000")
 
+# Email e senha para login no financiamento
 FINAN_EMAIL = os.getenv("FINAN_EMAIL", "sustentacao.renault@gmail.com")
 FINAN_SENHA = os.getenv("FINAN_SENHA", "MetaL@123")
 
@@ -158,133 +159,265 @@ def _esta_em_concessionaria(ctx) -> bool:
 
 def _selecionar_concessionaria_robusta(ctx, page: Page, tempo_ms: int = 45000) -> bool:
     """
-    Seleciona uma concessionária com estratégias robustas:
-    - Variações de botão "Selecionar"
-    - Scroll incremental para listas virtualizadas
+    Seleciona a PRIMEIRA concessionária exibida com estratégias robustas.
+    
+    Estratégias:
+    - Foca especificamente na primeira concessionária visível
+    - Verifica se já está selecionada antes de tentar selecionar
+    - Trata navegação automática para pagamento
+    - Scroll incremental para materializar itens virtualizados
     - Clique via JS e fallback force
-    - Clique no card inteiro quando necessário
-    - Confirmação via _dealer_esta_selecionado
+    - Confirmação via _dealer_esta_selecionado e URL
     """
+    print("[DEBUG] Iniciando seleção da primeira concessionária...")
     t_end = time.time() + (tempo_ms / 1000.0)
 
-    # Garante que estamos de fato na tela de concessionária
-    if not _esta_em_concessionaria(ctx):
+    # Verificação 1: Se já está em pagamento, concessionária foi pré-selecionada
+    if URL_PAGAMENTO_REGEX.search(page.url or ""):
+        print("[DEBUG] Já estamos em pagamento, concessionária deve estar pré-selecionada")
+        return True
+
+    # Verificação 2: Garante que estamos na tela de concessionária
+    # Atualiza contexto antes de verificar
+    ctx_atualizado = _get_configurator_ctx(page)
+    if not _esta_em_concessionaria(ctx_atualizado):
+        # Pode ter navegado automaticamente para pagamento
+        if URL_PAGAMENTO_REGEX.search(page.url or ""):
+            print("[DEBUG] Navegou automaticamente para pagamento")
+            return True
+        print("[DEBUG] Não está na tela de concessionária")
         return False
 
-    # Função interna para coletar possíveis botões de selecionar
-    def coletar_botoes():
+    # Função interna para coletar PRIMEIRA concessionária disponível
+    def coletar_primeira_concessionaria():
+        """
+        Retorna o botão/card da PRIMEIRA concessionária disponível (não selecionada).
+        Prioriza botões "Selecionar" e ignora os já selecionados.
+        """
         candidatos = []
+        
+        # Estratégia 1: Botões "Selecionar" por role
         try:
-            loc = ctx.get_by_role("button", name=re.compile(r"Selecion(ar|e|ado)", re.I))
+            loc = ctx_atualizado.get_by_role("button", name=re.compile(r"Selecionar", re.I))
             for i in range(min(loc.count(), 10)):
-                cand = loc.nth(i)
                 try:
-                    if cand.is_visible():
-                        candidatos.append(cand)
+                    cand = loc.nth(i)
+                    if not cand.is_visible():
+                        continue
+                    # Ignora se já está selecionado
+                    txt = (cand.text_content() or "").strip().lower()
+                    if "selecionado" in txt or "selecionada" in txt:
+                        continue
+                    candidatos.append(("button_role", cand))
+                    # Retorna a primeira imediatamente
+                    return candidatos[0] if candidatos else None
                 except Exception:
                     continue
         except Exception:
             pass
+        
+        # Estratégia 2: Locator por texto "Selecionar"
         try:
-            loc = ctx.locator('button:has-text("Selecionar")')
+            loc = ctx_atualizado.locator('button:has-text("Selecionar")')
             for i in range(min(loc.count(), 10)):
-                cand = loc.nth(i)
                 try:
-                    if cand.is_visible():
-                        candidatos.append(cand)
+                    cand = loc.nth(i)
+                    if not cand.is_visible():
+                        continue
+                    txt = (cand.text_content() or "").strip().lower()
+                    if "selecionado" in txt or "selecionada" in txt:
+                        continue
+                    candidatos.append(("button_text", cand))
+                    return candidatos[0] if candidatos else None
                 except Exception:
                     continue
         except Exception:
             pass
+        
+        # Estratégia 3: Data-testid ou seletores customizados
         try:
-            loc = ctx.locator('[data-testid*="select" i], [data-testid*="selecionar" i]')
+            loc = ctx_atualizado.locator('[data-testid*="select" i], [data-testid*="selecionar" i], [data-testid*="dealer"] button')
             for i in range(min(loc.count(), 10)):
-                cand = loc.nth(i)
                 try:
-                    if cand.is_visible():
-                        candidatos.append(cand)
+                    cand = loc.nth(i)
+                    if not cand.is_visible():
+                        continue
+                    txt = (cand.text_content() or "").strip().lower()
+                    if "selecionado" in txt or "selecionada" in txt:
+                        continue
+                    candidatos.append(("data_testid", cand))
+                    return candidatos[0] if candidatos else None
                 except Exception:
                     continue
         except Exception:
             pass
-        return candidatos
+        
+        # Estratégia 4: Cards de concessionária (clique no card inteiro)
+        try:
+            cards = ctx_atualizado.locator('[data-testid*="dealer"], [class*="dealer-card"], li:has-text("km")')
+            if cards.count() > 0:
+                primeiro_card = cards.first
+                if primeiro_card.is_visible():
+                    # Tenta encontrar botão dentro do card
+                    btn_no_card = primeiro_card.locator('button:has-text("Selecionar")').first
+                    if btn_no_card.count() > 0 and btn_no_card.is_visible():
+                        txt = (btn_no_card.text_content() or "").strip().lower()
+                        if "selecionado" not in txt and "selecionada" not in txt:
+                            return ("card_button", btn_no_card)
+                    # Se não tiver botão, retorna o card para clique direto
+                    return ("card", primeiro_card)
+        except Exception:
+            pass
+        
+        return None
 
-    ultimo_qtd = -1
-    scrolls_sem_mudar = 0
+    scrolls_realizados = 0
+    ultima_url = page.url
 
     while time.time() < t_end:
-        # Se já estiver marcado, retorna sucesso
+        # Atualiza contexto a cada iteração para evitar stale references
+        ctx_atualizado = _get_configurator_ctx(page)
+        
+        # Verificação: Se já está selecionado, retorna sucesso
         try:
-            if _dealer_esta_selecionado(ctx):
+            if _dealer_esta_selecionado(ctx_atualizado):
+                print("[DEBUG] Concessionária já está selecionada")
                 return True
         except Exception:
             pass
 
-        botoes = coletar_botoes()
-        if botoes:
-            for btn in botoes[:5]:
-                try:
-                    txt = (btn.text_content() or "").strip().lower()
-                except Exception:
-                    txt = ""
-                if "selecionado" in txt:
-                    continue
-                try:
-                    btn.scroll_into_view_if_needed()
-                except Exception:
-                    pass
-                # Clique via JS, depois force se necessário
+        # Verificação: Se navegou para pagamento automaticamente
+        url_atual = page.url or ""
+        if URL_PAGAMENTO_REGEX.search(url_atual):
+            print("[DEBUG] Navegou automaticamente para pagamento durante seleção")
+            return True
+        
+        # Verificação: Se saiu da tela de concessionária
+        if not URL_CONCESSIONARIA_REGEX.search(url_atual) and not _esta_em_concessionaria(ctx_atualizado):
+            if URL_PAGAMENTO_REGEX.search(url_atual):
+                print("[DEBUG] Navegou para pagamento")
+                return True
+            print(f"[DEBUG] URL mudou: {url_atual}")
+            # Pequeno delay para verificar se está carregando
+            page.wait_for_timeout(1000)
+            if not URL_CONCESSIONARIA_REGEX.search(page.url or ""):
+                print("[DEBUG] Não está mais na concessionária e não está em pagamento")
+                return False
+
+        # Coleta primeira concessionária
+        primeira_concessionaria = coletar_primeira_concessionaria()
+        
+        if primeira_concessionaria:
+            tipo, elemento = primeira_concessionaria
+            print(f"[DEBUG] Encontrada primeira concessionária (tipo: {tipo})")
+            
+            try:
+                # Scroll para visibilidade
+                elemento.scroll_into_view_if_needed()
+                page.wait_for_timeout(500)
+                
+                # Tenta clique
                 clicou = False
                 try:
-                    btn.evaluate("el => el.click()")
+                    # Clique via JavaScript (mais confiável)
+                    elemento.evaluate("el => el.click()")
                     clicou = True
+                    print("[DEBUG] Clique via JS executado")
                 except Exception:
                     try:
-                        btn.click(force=True)
+                        # Fallback: clique via Playwright
+                        elemento.click(force=True, timeout=5000)
                         clicou = True
+                        print("[DEBUG] Clique via Playwright executado")
                     except Exception:
-                        pass
+                        print("[DEBUG] Falha ao clicar na concessionária")
+                
                 if clicou:
-                    page.wait_for_timeout(1200)
-                    if _dealer_esta_selecionado(ctx):
+                    # Aguarda mudança de estado ou navegação
+                    page.wait_for_timeout(1500)
+                    
+                    # Verifica se foi selecionado
+                    if _dealer_esta_selecionado(ctx_atualizado):
+                        print("[DEBUG] Concessionária selecionada com sucesso")
                         return True
-            # Tentativa de clicar no card do último botão analisado
-            try:
-                card = btn.locator("xpath=ancestor-or-self::*[self::*[@data-testid][1] or self::li or self::div][1]").first
-                if card and card.is_visible():
-                    try:
-                        card.click(force=True)
-                        page.wait_for_timeout(800)
-                        if _dealer_esta_selecionado(ctx):
+                    
+                    # Verifica se navegou para pagamento
+                    if URL_PAGAMENTO_REGEX.search(page.url or ""):
+                        print("[DEBUG] Navegou para pagamento após clique")
+                        return True
+                    
+                    # Verifica mudança de URL
+                    if page.url != ultima_url:
+                        print(f"[DEBUG] URL mudou: {ultima_url} -> {page.url}")
+                        ultima_url = page.url
+                        # Pequeno delay adicional
+                        page.wait_for_timeout(1000)
+                        if _dealer_esta_selecionado(_get_configurator_ctx(page)):
                             return True
+                
+            except Exception as e:
+                print(f"[DEBUG] Erro ao tentar selecionar concessionária: {e}")
+                page.wait_for_timeout(500)
+        else:
+            # Se não encontrou, tenta scroll para materializar itens
+            print("[DEBUG] Nenhuma concessionária encontrada, fazendo scroll...")
+            try:
+                ctx_atualizado.evaluate("() => { window.scrollBy(0, 800); }")
+                scrolls_realizados += 1
+                page.wait_for_timeout(800)
+                
+                # Limita número de scrolls
+                if scrolls_realizados > 10:
+                    # Volta ao topo
+                    try:
+                        ctx_atualizado.evaluate("() => { window.scrollTo(0, 0); }")
                     except Exception:
                         pass
+                    scrolls_realizados = 0
+                    page.wait_for_timeout(500)
+                    
             except Exception:
                 pass
-        else:
-            # Força scroll para materializar itens
-            try:
-                ctx.evaluate("() => { window.scrollBy(0, 800); }")
-            except Exception:
-                pass
-            page.wait_for_timeout(600)
 
-            qtd = len(coletar_botoes())
-            if qtd == ultimo_qtd:
-                scrolls_sem_mudar += 1
-                try:
-                    ctx.evaluate("() => { window.scrollTo(0, 0); }")
-                except Exception:
-                    pass
-                page.wait_for_timeout(400)
-            else:
-                ultimo_qtd = qtd
-                scrolls_sem_mudar = 0
+        # Pequeno delay entre iterações
+        page.wait_for_timeout(300)
 
-            if scrolls_sem_mudar > 20:
-                break
-
-    return _dealer_esta_selecionado(ctx)
+    # Verificação final
+    print("[DEBUG] Timeout atingido, verificando estado final...")
+    ctx_final = _get_configurator_ctx(page)
+    
+    # Se está em pagamento, sucesso
+    if URL_PAGAMENTO_REGEX.search(page.url or ""):
+        print("[DEBUG] Estado final: em pagamento (sucesso)")
+        return True
+    
+    # Se concessionária está selecionada, sucesso
+    if _dealer_esta_selecionado(ctx_final):
+        print("[DEBUG] Estado final: concessionária selecionada (sucesso)")
+        return True
+    
+    print("[DEBUG] Estado final: falha ao selecionar concessionária")
+    print(f"[DEBUG] URL atual: {page.url}")
+    
+    # Logs detalhados para debug
+    try:
+        ctx_debug = _get_configurator_ctx(page)
+        esta_em_concessionaria = _esta_em_concessionaria(ctx_debug)
+        dealer_selecionado = _dealer_esta_selecionado(ctx_debug)
+        
+        print(f"[DEBUG] Está em concessionária: {esta_em_concessionaria}")
+        print(f"[DEBUG] Dealer selecionado: {dealer_selecionado}")
+        
+        # Tenta coletar informações sobre elementos disponíveis
+        try:
+            botoes_count = ctx_debug.get_by_role("button", name=re.compile(r"Selecionar", re.I)).count()
+            print(f"[DEBUG] Botões 'Selecionar' encontrados: {botoes_count}")
+        except Exception as e:
+            print(f"[DEBUG] Erro ao contar botões: {e}")
+    except Exception as e:
+        print(f"[DEBUG] Erro ao coletar informações de debug: {e}")
+    
+    return False
 
 
 def _tem_ui_pagamento(ctx) -> bool:
@@ -538,22 +671,85 @@ def _ir_para_pagamento(page: Page, request) -> tuple:
             else:
                 page.wait_for_timeout(1000)
 
+    # Verifica se chegou na concessionária
     if not _esperar_concessionaria(page, ctx, 5000):
+        # Pode ter navegado automaticamente para pagamento
+        ctx_atual = _get_configurator_ctx(page)
+        if _esperar_pagamento(page, ctx_atual, 3000):
+            print("[DEBUG] Navegou automaticamente para pagamento sem passar por concessionária")
+            ctx = _resolver_ctx_pagamento(page)
+            _anexar_screenshot(request, page, "Pagamento - Navegação Automática")
+            return page, ctx
         _anexar_screenshot(request, page, "Erro - Falha ao Chegar na Concessionária")
         raise AssertionError(f"Não foi possível chegar à etapa de Concessionária. O script ficou preso em: {page.url}")
     
+    # Atualiza contexto e insere CEP
     ctx = _get_configurator_ctx(page)
     _inserir_cep_se_necessario(ctx, page)
+    page.wait_for_timeout(2000)  # Aguarda carregamento após CEP
 
-    # Nova etapa: seleção robusta da concessionária
-    if not _selecionar_concessionaria_robusta(ctx, page, 45000):
-        _anexar_screenshot(request, page, "Erro - Não foi possível selecionar concessionária")
-        raise AssertionError("Não foi possível selecionar uma concessionária.")
+    # Verificação crítica: Re-verifica se ainda está na concessionária
+    # Pode ter navegado automaticamente após inserir CEP
+    ctx_atualizado = _get_configurator_ctx(page)
+    if URL_PAGAMENTO_REGEX.search(page.url or ""):
+        print("[DEBUG] Navegou automaticamente para pagamento após inserir CEP")
+        ctx = _resolver_ctx_pagamento(page)
+        _anexar_screenshot(request, page, "Pagamento - Após CEP")
+        return page, ctx
+    
+    if not _esperar_concessionaria(page, ctx_atualizado, 2000):
+        # Verifica se está em pagamento
+        if _esperar_pagamento(page, ctx_atualizado, 2000):
+            print("[DEBUG] Estado inconsistente detectado: não está na concessionária, mas está em pagamento")
+            ctx = _resolver_ctx_pagamento(page)
+            _anexar_screenshot(request, page, "Pagamento - Estado Inconsistente")
+            return page, ctx
+        print("[DEBUG] Ainda não chegou na concessionária, aguardando...")
+        page.wait_for_timeout(2000)
+
+    # Etapa crítica: Seleção da primeira concessionária
+    print("[DEBUG] Iniciando seleção da primeira concessionária...")
+    _anexar_screenshot(request, page, "Concessionária - Antes da Seleção")
+    
+    # CORREÇÃO: Usa ctx_atualizado em vez de ctx (que estava desatualizado)
+    selecionou = _selecionar_concessionaria_robusta(ctx_atualizado, page, 45000)
+    
+    # Verificação pós-seleção: pode ter navegado automaticamente
+    ctx_final = _get_configurator_ctx(page)
+    url_final = page.url or ""
+    
+    if URL_PAGAMENTO_REGEX.search(url_final):
+        print("[DEBUG] Navegou automaticamente para pagamento após seleção")
+        ctx = _resolver_ctx_pagamento(page)
+        _anexar_screenshot(request, page, "Pagamento - Após Seleção")
+        return page, ctx
+    
+    if not selecionou:
+        # Última verificação: pode estar selecionado mas não detectado
+        if _dealer_esta_selecionado(ctx_final):
+            print("[DEBUG] Concessionária está selecionada (detectado após timeout)")
+            selecionou = True
+        else:
+            _anexar_screenshot(request, page, "Erro - Não foi possível selecionar concessionária")
+            raise AssertionError(f"Não foi possível selecionar uma concessionária. URL: {url_final}")
+    
+    if selecionou:
+        print("[DEBUG] Concessionária selecionada com sucesso")
+        _anexar_screenshot(request, page, "Concessionária - Selecionada")
+        page.wait_for_timeout(1500)  # Aguarda atualização da UI
     
     # =========================================================
     # Avançar para pagamento com robustez
     # =========================================================
-    print("Tentando avançar para pagamento…")
+    print("[DEBUG] Tentando avançar para pagamento...")
+    
+    # Verificação inicial: pode já estar em pagamento
+    ctx_antes_pagamento = _get_configurator_ctx(page)
+    if _esperar_pagamento(page, ctx_antes_pagamento, 2000):
+        print("[DEBUG] Já está em pagamento após seleção")
+        ctx = _resolver_ctx_pagamento(page)
+        _anexar_screenshot(request, page, "Pagamento - Tela Inicial")
+        return page, ctx
     
     regex_btn_pagamento = re.compile(r"Pagamento|Ir para pagamento|Continuar|Avan[cç]ar|Finalizar|Pr[oó]ximo", re.I)
 
@@ -561,63 +757,120 @@ def _ir_para_pagamento(page: Page, request) -> tuple:
     start_time = time.time()
     
     while time.time() - start_time < 45:
-        if _esperar_pagamento(page, ctx, 800):
+        # Atualiza contexto a cada iteração
+        ctx_atual = _get_configurator_ctx(page)
+        
+        # Verifica se já chegou em pagamento
+        if _esperar_pagamento(page, ctx_atual, 800):
+            print("[DEBUG] Detectado navegação para pagamento")
             avancou_sucesso = True
             break
         
-        btn_pag = ctx.get_by_role("button", name=regex_btn_pagamento).last
+        # Busca botão de avançar/pagamento
         try:
-            if btn_pag and btn_pag.is_visible():
+            # Tenta botão "Ir para pagamento" ou similar
+            btn_pag = ctx_atual.get_by_role("button", name=regex_btn_pagamento).last
+            if btn_pag and btn_pag.count() > 0 and btn_pag.is_visible():
+                # Verifica se está habilitado
                 try:
-                    expect(btn_pag).not_to_be_disabled(timeout=6000)
+                    if btn_pag.is_disabled():
+                        print("[DEBUG] Botão de pagamento está desabilitado, aguardando...")
+                        page.wait_for_timeout(1000)
+                        continue
                 except Exception:
                     pass
+                
                 try:
+                    # Tenta habilitar esperando
+                    expect(btn_pag).not_to_be_disabled(timeout=3000)
+                except Exception:
+                    pass
+                
+                # Tenta clicar
+                try:
+                    btn_pag.scroll_into_view_if_needed()
                     btn_pag.click(timeout=8000)
+                    print("[DEBUG] Clique no botão de pagamento executado")
+                    page.wait_for_timeout(2000)  # Aguarda navegação
+                    
+                    # Verifica se navegou
+                    if _esperar_pagamento(page, _get_configurator_ctx(page), 2000):
+                        avancou_sucesso = True
+                        break
                 except Exception:
                     try:
+                        # Fallback: clique via JS
                         btn_pag.evaluate("el => el.click()")
+                        print("[DEBUG] Clique via JS no botão de pagamento")
+                        page.wait_for_timeout(2000)
+                        
+                        if _esperar_pagamento(page, _get_configurator_ctx(page), 2000):
+                            avancou_sucesso = True
+                            break
                     except Exception:
-                        pass
+                        print("[DEBUG] Falha ao clicar no botão de pagamento")
         except Exception:
             pass
 
         # Pequeno scroll para materializar botões
         try:
-            ctx.evaluate("() => { window.scrollBy(0, 400); }")
+            ctx_atual.evaluate("() => { window.scrollBy(0, 400); }")
         except Exception:
             pass
         page.wait_for_timeout(800)
 
     # Fallbacks de URL (mantidos porém menos agressivos)
     if not avancou_sucesso:
-        print("Tentando fallback via URL direta…")
+        print("[DEBUG] Tentando fallback via URL direta...")
         atual = page.url
         destinos = []
-        if "/concessionaria" in atual:
+        
+        # Extrai modelo da URL
+        modelo_match = re.search(r"/configurador/([^/]+)/", atual, re.I)
+        modelo = modelo_match.group(1) if modelo_match else None
+        
+        if "/concessionaria" in atual.lower():
+            destinos.append(atual.replace("/concessionaria", "/metodo-de-pagamento"))
             destinos.append(atual.replace("/concessionaria", "/pagamento"))
             destinos.append(atual.replace("/concessionaria", "/checkout"))
         
-        if "kardian" in atual: destinos.append("https://loja.renault.com.br/configurador/kardian/pagamento")
-        if "kwid" in atual: destinos.append("https://loja.renault.com.br/configurador/kwid/pagamento")
+        if modelo:
+            destinos.append(f"https://loja.renault.com.br/configurador/{modelo}/metodo-de-pagamento")
+            destinos.append(f"https://loja.renault.com.br/configurador/{modelo}/pagamento")
 
+        print(f"[DEBUG] Tentando {len(destinos)} URLs de fallback...")
         for url_dest in destinos:
             try:
-                print(f"Navegando para: {url_dest}")
+                print(f"[DEBUG] Navegando para: {url_dest}")
                 page.goto(url_dest, wait_until="domcontentloaded", timeout=15000)
-                if _esperar_pagamento(page, ctx, 10000):
+                ctx_fallback = _get_configurator_ctx(page)
+                if _esperar_pagamento(page, ctx_fallback, 10000):
+                    print(f"[DEBUG] Sucesso via fallback: {url_dest}")
                     avancou_sucesso = True
                     break
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[DEBUG] Falha no fallback {url_dest}: {e}")
+                continue
 
+    # Resolve contexto final de pagamento
     ctx = _resolver_ctx_pagamento(page)
     _anexar_screenshot(request, page, "Pagamento - Tela Inicial")
 
-    if not avancou_sucesso and not _esperar_pagamento(page, ctx, 5000):
-        _anexar_screenshot(request, page, "Erro - Pagamento não detectado")
-        raise AssertionError(f"Falha ao detectar tela de Pagamento após selecionar concessionária. URL: {page.url}")
+    # Verificação final
+    if not avancou_sucesso:
+        # Última tentativa de verificação
+        ctx_final = _get_configurator_ctx(page)
+        if _esperar_pagamento(page, ctx_final, 5000):
+            print("[DEBUG] Pagamento detectado na verificação final")
+            avancou_sucesso = True
+        else:
+            _anexar_screenshot(request, page, "Erro - Pagamento não detectado")
+            # Logs detalhados para debug
+            print(f"[DEBUG] URL final: {page.url}")
+            print(f"[DEBUG] Tem UI pagamento: {_tem_ui_pagamento(ctx_final)}")
+            raise AssertionError(f"Falha ao detectar tela de Pagamento após selecionar concessionária. URL: {page.url}")
 
+    print("[DEBUG] Navegação para pagamento concluída com sucesso")
     return page, ctx
 
 
@@ -725,52 +978,301 @@ def _password_visible_em_qualquer_frame(page: Page, ctx, timeout_ms: int = 10000
 # Testes
 # =============================
 
+def _clicar_definir_metodo_pagamento(ctx, page: Page, timeout_ms: int = 10000) -> bool:
+    """
+    Clica no botão "Definir método de pagamento" após selecionar uma opção de pagamento.
+    Retorna True se clicou com sucesso.
+    """
+    print("[DEBUG] Tentando clicar em 'Definir método de pagamento'...")
+    
+    deadline = time.time() + (timeout_ms / 1000.0)
+    
+    while time.time() < deadline:
+        # Estratégia 1: Botão por texto exato
+        try:
+            btn = ctx.get_by_role("button", name=re.compile(r"Definir\s*m[ée]todo\s*de\s*pagamento|Definir\s*pagamento|Confirmar\s*m[ée]todo", re.I)).first
+            if btn and btn.count() > 0 and btn.is_visible() and not btn.is_disabled():
+                btn.scroll_into_view_if_needed()
+                btn.click(timeout=5000)
+                print("[DEBUG] Clicou em 'Definir método de pagamento' via role")
+                page.wait_for_timeout(1500)
+                return True
+        except Exception:
+            pass
+        
+        # Estratégia 2: Locator por texto
+        try:
+            btn = ctx.locator('button:has-text("Definir método"), button:has-text("Definir pagamento"), button:has-text("Confirmar método")').first
+            if btn and btn.count() > 0 and btn.is_visible():
+                if not btn.is_disabled():
+                    btn.scroll_into_view_if_needed()
+                    btn.click(timeout=5000)
+                    print("[DEBUG] Clicou em 'Definir método de pagamento' via locator")
+                    page.wait_for_timeout(1500)
+                    return True
+        except Exception:
+            pass
+        
+        # Estratégia 3: Botão de submit ou continuar genérico
+        try:
+            btn = ctx.locator('button[type="submit"]').first
+            if btn and btn.count() > 0 and btn.is_visible() and not btn.is_disabled():
+                # Verifica se o texto faz sentido
+                txt = (btn.text_content() or "").strip().lower()
+                if any(palavra in txt for palavra in ["definir", "confirmar", "continuar", "próximo", "seguir"]):
+                    btn.scroll_into_view_if_needed()
+                    btn.click(timeout=5000)
+                    print("[DEBUG] Clicou em botão submit genérico")
+                    page.wait_for_timeout(1500)
+                    return True
+        except Exception:
+            pass
+        
+        page.wait_for_timeout(500)
+    
+    print("[DEBUG] Não encontrou botão 'Definir método de pagamento'")
+    return False
+
+
+def _iniciar_sessao_financiamento(ctx, page: Page, request, timeout_ms: int = 20000) -> bool:
+    """
+    Trata o fluxo de login após selecionar financiamento:
+    1. Aguarda navegação para /sessao/criar-conta/
+    2. Clica em "Iniciar sessão" quando estiver nessa URL
+    3. Preenche email e senha
+    Retorna True se login foi preenchido com sucesso.
+    """
+    print("[DEBUG] Iniciando fluxo de login para financiamento...")
+    
+    # URL esperada para a tela de criar conta/iniciar sessão
+    URL_SESSAO_REGEX = re.compile(r"/sessao/criar-conta", re.I)
+    
+    # Passo 1: Aguardar navegação para /sessao/criar-conta/
+    print("[DEBUG] Aguardando navegação para /sessao/criar-conta/...")
+    deadline = time.time() + (timeout_ms / 1000.0)
+    
+    chegou_sessao = False
+    while time.time() < deadline:
+        url_atual = page.url or ""
+        if URL_SESSAO_REGEX.search(url_atual):
+            print(f"[DEBUG] Chegou na URL de sessão: {url_atual}")
+            chegou_sessao = True
+            break
+        page.wait_for_timeout(500)
+    
+    if not chegou_sessao:
+        # Verifica se já está em outra página de login
+        if "/sessao/" in (page.url or ""):
+            print(f"[DEBUG] Está em página de sessão: {page.url}")
+            chegou_sessao = True
+        else:
+            raise AssertionError(f"Falha ao navegar para /sessao/criar-conta/. URL atual: {page.url}")
+    
+    # Aguarda carregamento da página
+    page.wait_for_timeout(2000)
+    ctx_atual = _get_configurator_ctx(page)
+    
+    # Passo 2: Clicar em "Iniciar sessão" quando estiver em /sessao/criar-conta/
+    print("[DEBUG] Procurando botão/link 'Iniciar sessão'...")
+    
+    clicou_iniciar = False
+    deadline_clique = time.time() + 10000  # 10 segundos para encontrar e clicar
+    
+    while time.time() < deadline_clique and not clicou_iniciar:
+        # Estratégia 1: Botão "Iniciar sessão"
+        try:
+            btn_iniciar = ctx_atual.get_by_role("button", name=re.compile(r"Iniciar\s*sess[ãa]o|Iniciar\s*sessão|Já\s*tenho\s*cadastro|Entrar", re.I)).first
+            if btn_iniciar and btn_iniciar.count() > 0 and btn_iniciar.is_visible():
+                print("[DEBUG] Encontrou botão 'Iniciar sessão', clicando...")
+                btn_iniciar.scroll_into_view_if_needed()
+                btn_iniciar.click(timeout=5000)
+                page.wait_for_timeout(2000)
+                clicou_iniciar = True
+                break
+        except Exception:
+            pass
+        
+        # Estratégia 2: Link "Iniciar sessão"
+        try:
+            link_iniciar = ctx_atual.get_by_role("link", name=re.compile(r"Iniciar\s*sess[ãa]o|Já\s*tenho\s*cadastro|Entrar", re.I)).first
+            if link_iniciar and link_iniciar.count() > 0 and link_iniciar.is_visible():
+                print("[DEBUG] Encontrou link 'Iniciar sessão', clicando...")
+                link_iniciar.click(timeout=5000)
+                page.wait_for_timeout(2000)
+                clicou_iniciar = True
+                break
+        except Exception:
+            pass
+        
+        # Estratégia 3: Locator por texto
+        try:
+            loc_iniciar = ctx_atual.locator('button:has-text("Iniciar sessão"), a:has-text("Iniciar sessão"), button:has-text("Já tenho cadastro"), a:has-text("Já tenho cadastro")').first
+            if loc_iniciar and loc_iniciar.count() > 0 and loc_iniciar.is_visible():
+                print("[DEBUG] Encontrou elemento 'Iniciar sessão' via locator, clicando...")
+                loc_iniciar.click(timeout=5000)
+                page.wait_for_timeout(2000)
+                clicou_iniciar = True
+                break
+        except Exception:
+            pass
+        
+        page.wait_for_timeout(500)
+    
+    if not clicou_iniciar:
+        print("[DEBUG] Não encontrou botão 'Iniciar sessão', tentando prosseguir mesmo assim...")
+        # Pode já estar no formulário de login
+    
+    # Aguarda formulário de login aparecer
+    page.wait_for_timeout(2000)
+    ctx_atual = _get_configurator_ctx(page)
+    
+    # Passo 3: Preencher email e senha
+    print("[DEBUG] Preenchendo email e senha...")
+    try:
+        # Email
+        email_input = None
+        # Tenta primeiro no contexto atual
+        try:
+            email_input = ctx_atual.locator('input[type="email"], input[name*="email"], input[placeholder*="email" i]').first
+            if email_input.count() > 0 and email_input.is_visible():
+                pass
+            else:
+                email_input = None
+        except Exception:
+            pass
+        
+        # Se não encontrou, tenta em todos os frames
+        if not email_input or email_input.count() == 0:
+            for f in page.frames:
+                try:
+                    email_input = f.locator('input[type="email"], input[name*="email"], input[placeholder*="email" i]').first
+                    if email_input.count() > 0 and email_input.is_visible():
+                        ctx_atual = f
+                        print(f"[DEBUG] Campo de email encontrado no frame: {getattr(f, 'url', 'N/A')}")
+                        break
+                except Exception:
+                    continue
+        
+        if not email_input or email_input.count() == 0:
+            raise AssertionError("Campo de email não encontrado após clicar em 'Iniciar sessão'")
+        
+        email_input.fill(FINAN_EMAIL)
+        print(f"[DEBUG] Email preenchido: {FINAN_EMAIL}")
+        page.wait_for_timeout(500)
+        
+        # Senha
+        password_input = None
+        try:
+            password_input = ctx_atual.locator('input[type="password"]').first
+            if password_input.count() > 0 and password_input.is_visible():
+                pass
+            else:
+                password_input = None
+        except Exception:
+            pass
+        
+        # Se não encontrou, tenta em todos os frames
+        if not password_input or password_input.count() == 0:
+            for f in page.frames:
+                try:
+                    password_input = f.locator('input[type="password"]').first
+                    if password_input.count() > 0 and password_input.is_visible():
+                        ctx_atual = f
+                        print(f"[DEBUG] Campo de senha encontrado no frame: {getattr(f, 'url', 'N/A')}")
+                        break
+                except Exception:
+                    continue
+        
+        if not password_input or password_input.count() == 0:
+            raise AssertionError("Campo de senha não encontrado")
+        
+        password_input.fill(FINAN_SENHA)
+        print("[DEBUG] Senha preenchida")
+        page.wait_for_timeout(500)
+        
+        # Submeter formulário
+        btn_entrar = ctx_atual.get_by_role("button", name=re.compile(r"Entrar|Acessar|Login|Iniciar\s*sess[ãa]o|Confirmar", re.I)).first
+        if btn_entrar.count() > 0 and btn_entrar.is_visible():
+            btn_entrar.scroll_into_view_if_needed()
+            btn_entrar.click(timeout=5000)
+            print("[DEBUG] Botão 'Entrar' clicado")
+        else:
+            password_input.press("Enter")
+            print("[DEBUG] Login submetido via Enter")
+        
+        page.wait_for_timeout(2000)
+        return True
+        
+    except Exception as e:
+        print(f"[DEBUG] Erro ao preencher login: {e}")
+        _anexar_screenshot(request, page, "Erro - Falha ao Preencher Login")
+        raise
+
+
 @pytest.mark.jornada
 @pytest.mark.pagamento
 @pytest.mark.regressao
 def test_pagamento_opcao_financiamento_requer_login(page: Page, request):
     page, ctx = _ir_para_pagamento(page, request)
 
-    # Ação: Selecionar Financiamento
+    # Ação 1: Selecionar Financiamento (radio button)
+    print("[DEBUG] Selecionando opção Financiamento...")
     _marcar_radio_robusto(ctx, re.compile(r"Financiamento", re.I))
     _anexar_screenshot(request, page, "Pagamento - Financiamento Selecionado")
+    page.wait_for_timeout(1500)  # Aguarda UI atualizar
 
-    # Verificação: Formulário de Login deve aparecer (em qualquer frame)
-    login_visible = _password_visible_em_qualquer_frame(page, ctx, 16000)
+    # Ação 2: Clicar no botão "Definir método de pagamento"
+    print("[DEBUG] Clicando em 'Definir método de pagamento'...")
+    clicou_definir = _clicar_definir_metodo_pagamento(ctx, page, 15000)
+    
+    if not clicou_definir:
+        print("[DEBUG] Tentando fallback: botão pode ter texto diferente...")
+        # Fallback: tenta botões genéricos de continuar/confirmar
+        try:
+            btn_continuar = ctx.get_by_role("button", name=re.compile(r"Continuar|Confirmar|Avançar|Próximo|Definir", re.I)).first
+            if btn_continuar and btn_continuar.count() > 0 and btn_continuar.is_visible() and not btn_continuar.is_disabled():
+                btn_continuar.click(timeout=5000)
+                page.wait_for_timeout(1500)
+                clicou_definir = True
+        except Exception:
+            pass
+    
+    _anexar_screenshot(request, page, "Pagamento - Após Clicar Definir Método")
+    page.wait_for_timeout(2000)  # Aguarda modal/formulário aparecer
+
+    # Ação 3: Verificar se aparece opção de criar conta ou iniciar sessão
+    print("[DEBUG] Verificando se aparece opção de login...")
+    
+    # Aguarda formulário de login aparecer
+    ctx_atual = _get_configurator_ctx(page)
+    login_visible = _password_visible_em_qualquer_frame(page, ctx_atual, 16000)
 
     if not login_visible:
-        # Retry selection
-        _marcar_radio_robusto(ctx, re.compile(r"Financiamento", re.I))
-        login_visible = _password_visible_em_qualquer_frame(page, ctx, 10000)
-        # Fallback: acionar CTA de login caso exista
-        if not login_visible:
-            try:
-                btn_login = ctx.get_by_role("button", name=re.compile(r"Entrar|Login|Acessar|Já tenho cadastro", re.I)).first
-                if btn_login and btn_login.is_visible():
-                    btn_login.click()
-                    login_visible = _password_visible_em_qualquer_frame(page, ctx, 8000)
-            except Exception:
-                pass
+        # Pode precisar clicar em "Iniciar sessão" primeiro
+        print("[DEBUG] Formulário não visível, tentando clicar em 'Iniciar sessão'...")
+        try:
+            btn_iniciar = ctx_atual.get_by_role("button", name=re.compile(r"Iniciar\s*sess[ãa]o|Já\s*tenho\s*cadastro", re.I)).first
+            if btn_iniciar and btn_iniciar.count() > 0 and btn_iniciar.is_visible():
+                btn_iniciar.click(timeout=5000)
+                page.wait_for_timeout(2000)
+                ctx_atual = _get_configurator_ctx(page)
+                login_visible = _password_visible_em_qualquer_frame(page, ctx_atual, 8000)
+        except Exception:
+            pass
 
-    assert login_visible, "O formulário de login não apareceu após selecionar Financiamento."
+    if not login_visible:
+        _anexar_screenshot(request, page, "Erro - Formulário de login não apareceu")
+        pytest.fail("O formulário de login não apareceu após selecionar Financiamento e definir método de pagamento.")
 
-    # Preencher Login
-    try:
-        ctx.locator('input[type="email"], input[name*="email"]').first.fill(FINAN_EMAIL)
-        ctx.locator('input[type="password"]').first.fill(FINAN_SENHA)
-        
-        btn_entrar = ctx.get_by_role("button", name=re.compile(r"Entrar|Acessar|Login", re.I)).first
-        if btn_entrar.is_visible():
-            btn_entrar.click()
-        else:
-            ctx.locator('input[type="password"]').press("Enter")
-    except Exception as e:
-        pytest.fail(f"Erro ao tentar preencher login: {e}")
+    # Ação 4: Preencher login usando helper específico
+    print("[DEBUG] Iniciando preenchimento de login...")
+    _iniciar_sessao_financiamento(ctx_atual, page, request, 15000)
     
     _anexar_screenshot(request, page, "Pagamento - Login Submetido")
     
     # Validar ausência de erro imediato
-    expect(ctx.get_by_text(re.compile(r"inv[aá]lid|incorret", re.I))).to_have_count(0)
+    ctx_final = _get_configurator_ctx(page)
+    expect(ctx_final.get_by_text(re.compile(r"inv[aá]lid|incorret", re.I))).to_have_count(0)
 
 
 @pytest.mark.jornada
@@ -779,9 +1281,19 @@ def test_pagamento_opcao_financiamento_requer_login(page: Page, request):
 def test_pagamento_opcao_negociar_leva_para_resumo(page: Page, request):
     page, ctx = _ir_para_pagamento(page, request)
 
-    # Ação: Selecionar Negociar na Concessionária
+    # Ação 1: Selecionar Negociar na Concessionária (radio button)
+    print("[DEBUG] Selecionando opção 'Negociar na concessionária'...")
     _marcar_radio_robusto(ctx, re.compile(r"Negociar\s+na\s+concession[aá]ria", re.I))
     _anexar_screenshot(request, page, "Pagamento - Negociar Selecionado")
+    page.wait_for_timeout(1500)  # Aguarda UI atualizar
+
+    # Ação 2: Clicar no botão "Definir método de pagamento" (se necessário)
+    print("[DEBUG] Verificando se precisa clicar em 'Definir método de pagamento'...")
+    clicou_definir = _clicar_definir_metodo_pagamento(ctx, page, 10000)
+    
+    if clicou_definir:
+        _anexar_screenshot(request, page, "Pagamento - Após Clicar Definir Método (Negociar)")
+        page.wait_for_timeout(1500)
 
     # Botão Continuar/Resumo (robusto)
     btn_cont = ctx.get_by_role("button", name=re.compile(r"Resumo|Continuar|Avan[cç]ar|Finalizar|Prosseguir|Seguinte|Concluir|Ir para Resumo", re.I)).first
