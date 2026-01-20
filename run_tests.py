@@ -35,7 +35,7 @@ def main():
 
     args = [
         "-q",
-        "--maxfail=1",
+        # Removido --maxfail=1 para permitir mapear todas as falhas antes de encerrar
         "-n", workers_arg,
         "--browser", browser,
         "--base-url", base_url,

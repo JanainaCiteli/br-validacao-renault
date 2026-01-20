@@ -41,13 +41,25 @@ jobs:
           TS=$(date '+%Y-%m-%d_%H-%M-%S')
           echo "dir=reports/${TS}_${{ matrix.browser }}" >> $GITHUB_OUTPUT
 
-      - name: Run tests
+      - name: Run smoke (KWID guardrail + V3 básico)
         env:
           BASE_URL: https://loja.renault.com.br/
           BROWSER: ${{ matrix.browser }}
           REPORTS_DIR: ${{ steps.set.outputs.dir }}
+          FAIL_ON_SKIP: "true"
+          MODELOS_LIMIT: "1"
+          VERSOES_LIMIT: "2"
         run: |
-          python run_tests.py
+          python run_tests.py -m smoke
+
+      - name: Run regressão (E2E Matriz + demais)
+        env:
+          BASE_URL: https://loja.renault.com.br/
+          BROWSER: ${{ matrix.browser }}
+          REPORTS_DIR: ${{ steps.set.outputs.dir }}
+          FAIL_ON_SKIP: "true"
+        run: |
+          python run_tests.py -m regressao
 
       - name: Upload report artifacts
         if: always()

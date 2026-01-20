@@ -5,6 +5,11 @@ import base64
 import pytest
 import pytest_html
 from playwright.sync_api import Page, expect
+from helpers_concessionaria import (
+    esperar_concessionaria as esperar_concessionaria_padrao,
+    inserir_cep_robusto,
+    selecionar_concessionaria_robusta,
+)
 
 # =============================
 # Constantes e configurações
@@ -457,14 +462,14 @@ def test_validar_jornada_concessionaria_para_todos_modelos_e_versoes(page: Page,
 
             for v_idx in range(versoes_iter):
                 # --- Lógica de Skip para Bugs Conhecidos ---
-                # Exemplo: Kwid (Modelo 2) na versão 2 costuma travar
-                # Como a ordem dos modelos pode variar, o ideal seria checar o nome do carro,
-                # mas usando índices como base:
-                if m_idx == 2 and v_idx == 2:
-                    print(f"[SKIP] Pulando Modelo {m_idx} | Versão {v_idx} (Bug Conhecido do Kwid)")
-                    skips.append(f"Modelo {m_idx} | Versão {v_idx} (Bug Conhecido)")
-                    continue
-                # -------------------------------------------
+                # # Exemplo: Kwid (Modelo 2) na versão 2 costuma travar
+                # # Como a ordem dos modelos pode variar, o ideal seria checar o nome do carro,
+                # # mas usando índices como base:
+                # if m_idx == 2 and v_idx == 2:
+                #     print(f"[SKIP] Pulando Modelo {m_idx} | Versão {v_idx} (Bug Conhecido do Kwid)")
+                #     skips.append(f"Modelo {m_idx} | Versão {v_idx} (Bug Conhecido)")
+                #     continue
+                # # -------------------------------------------
 
                 try:
                     print(f"--- Iniciando Modelo {m_idx} | Versão {v_idx} ---")
